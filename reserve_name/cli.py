@@ -101,6 +101,95 @@ def provide_missing_vars(missing_vars):
         os.environ[var] = value
         print(f"✅ Set {var}")
 
+def create_github_actions_workflow(base_dir, package_name):
+    """Create GitHub Actions workflow file for automated PyPI publishing."""
+    root = Path(base_dir) / package_name
+    workflows_dir = root / '.github' / 'workflows'
+    
+    # Create directories if they don't exist
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    
+    # GitHub Actions workflow content
+    workflow_content = '''name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+    
+    - name: Build package
+      run: python -m build
+    
+    - name: Publish to PyPI
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      run: twine upload dist/*
+'''
+    
+    # Write the workflow file
+    workflow_path = workflows_dir / 'publish.yml'
+    with open(workflow_path, 'w') as f:
+        f.write(workflow_content)
+    
+    print(f"✅ Created GitHub Actions workflow at: {workflow_path}")
+    
+    return workflow_path
+
+def print_github_actions_instructions(package_name):
+    """Print instructions for setting up GitHub Actions and using tags."""
+    print("\n" + "=" * 60)
+    print("📋 GITHUB ACTIONS SETUP INSTRUCTIONS")
+    print("=" * 60)
+    
+    print("\n1. 🔑 ADD YOUR PYPI API TOKEN TO GITHUB SECRETS:")
+    print("   - Go to your GitHub repository")
+    print("   - Click: Settings → Secrets and variables → Actions")
+    print("   - Click 'New repository secret'")
+    print("   - Name: PYPI_API_TOKEN")
+    print("   - Value: your PyPI API token (starts with 'pypi-')")
+    
+    print("\n2. 🏷️  HOW TO PUBLISH WITH TAGS:")
+    print("   The GitHub Action will ONLY run when you push a tag starting with 'v'")
+    print("   \n   Example workflow:")
+    print("   # Update version in pyproject.toml first")
+    print("   git add pyproject.toml")
+    print("   git commit -m 'Bump version to 1.0.1'")
+    print("   git push")
+    print("   \n   # Then create and push a tag")
+    print("   git tag v1.0.1")
+    print("   git push origin v1.0.1")
+    
+    print("\n3. ⚠️  IMPORTANT NOTES:")
+    print("   - Regular pushes to main will NOT trigger PyPI publishing")
+    print("   - Only tagged releases (v*) will automatically publish to PyPI")
+    print("   - Make sure your pyproject.toml version matches your tag")
+    print("   - You can check the 'Actions' tab in GitHub to see if it worked")
+    
+    print("\n4. 🔍 EXAMPLE TAG FORMATS THAT WORK:")
+    print("   - v1.0.0")
+    print("   - v1.0.1")
+    print("   - v2.1.0")
+    print("   - v1.0.0-beta")
+    
+    print("\n" + "=" * 60)
+
 # Step 1: Initialize UV project and set up structure
 def create_uv_package_structure(base_dir, package_name, package_description):
     base_path = Path(base_dir)
@@ -236,11 +325,15 @@ def create_github_repo(base_dir, package_name):
         
         print(f"✅ GitHub repository created successfully: https://github.com/$(gh api user --jq .login)/{package_name}")
         
+        return True
+        
     except subprocess.CalledProcessError as e:
         print(f"❌ Error creating GitHub repository: {e}")
         print("Make sure you have 'gh' installed and authenticated (run 'gh auth login')")
+        return False
     except Exception as e:
         print(f"❌ Unexpected error creating GitHub repository: {e}")
+        return False
 
 def main():
     """Main entry point for the reserve-name command."""
@@ -281,7 +374,34 @@ def main():
         create_github = input("\nWould you like to create a GitHub repository for this package? (y/n): ")
         
         if create_github.lower() == 'y':
-            create_github_repo(base_dir, package_name)
+            github_success = create_github_repo(base_dir, package_name)
+            
+            if github_success:
+                # Ask if user wants to set up GitHub Actions
+                setup_actions = input("\nWould you like to set up GitHub Actions for automated PyPI publishing? (y/n): ")
+                
+                if setup_actions.lower() == 'y':
+                    print("\n⚙️ Setting up GitHub Actions...")
+                    create_github_actions_workflow(base_dir, package_name)
+                    
+                    # Add and commit the workflow file
+                    try:
+                        root = Path(base_dir) / package_name
+                        os.chdir(root)
+                        subprocess.run(["git", "add", ".github/"], check=True)
+                        subprocess.run(["git", "commit", "-m", "Add GitHub Actions workflow for PyPI publishing"], check=True)
+                        subprocess.run(["git", "push"], check=True)
+                        print("✅ GitHub Actions workflow committed and pushed!")
+                    except subprocess.CalledProcessError as e:
+                        print(f"⚠️ Created workflow file but failed to commit: {e}")
+                        print("You can manually commit the .github/workflows/publish.yml file")
+                    
+                    # Print setup instructions
+                    print_github_actions_instructions(package_name)
+                else:
+                    print("Skipping GitHub Actions setup.")
+            else:
+                print("Skipping GitHub Actions setup since repository creation failed.")
         else:
             print("Skipping GitHub repository creation.")
         
